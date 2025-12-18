@@ -1,0 +1,166 @@
+---
+title: "Final Exam"
+author: "Yash Hathi"
+date: "2025-12-06"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+# Part 1: Intro
+For this project, we will be looking at the fish data set. This dataset includes 159 fish, from four different 6 different fish species. Recorded are their weight(g), height(cm), width(cm), and finally three different length values(cm). 1st is vertical, 2nd is diagonal, and 3rd is cross length. The goal is to predict the weight of a fish based on their other measurement values.
+
+Here is a sample of our data:
+``` {r}
+fish <- read.csv("C:/Users/yashi/OneDrive/desktop/STAT 425/fish.csv")
+head(fish, 10)
+```
+
+# Part 2: Summary Statistics
+Lets first just look at some summary statistics of our data:
+``` {r}
+summary(fish)
+```
+I notice I have a fish with a weight of 0 grams. That is impossible. So as such I think it is fair that we drop this value from our future analysis, to help us later on. 
+``` {r}
+fish <- fish[fish$Weight > 0,]
+```
+
+Lets visualize the weight of our fish using a box plot: 
+``` {r}
+boxplot(fish$Weight, xlab = "Weight(g)", horizontal = TRUE, main = "Distribution of Fish Weight")
+```
+
+Looks like the mean weight of a fish is 273 grams. The median weight of our fish is 398.3 grams. As such we can assume our data is skewed right. There also seems to be a lot of spread in our data, with the range being 1650 grams. We also have 3 upper outliers. 
+
+We can also break this down by species. This will help us later on as we decide whether species has an effect on weight, and if it should be included in our model. 
+``` {r}
+boxplot(Weight ~ Species, data = fish, main = "Distribution of Fish Weight (g) by Species", 
+        col = c("blue", "red", "green", "yellow", "purple", "grey", "orange"))
+```
+We have 7 different species in our data, with all seeming to have different median weights. The highest being pike, and the lowest being whitefish and pike. Smelt, Roach, and Parkki seem to have lower variation. Our 3 outliers, 2 are Roach and one is Smelt. 
+
+I see our 3 length measurements seem to have the same. Roughly range 20-30 cm. That seems to me like fish have similar lengths for all three length metrics. They also have similar median values, with all three median values above 25. Lets just look at a visualization of Length 1. 
+
+``` {r}
+hist(fish$Length1, xlab = "Length 1(cm)", main = "Frequency of Length 1 (cm) for Fish")
+```
+The data is slightly skewed right, with a minimum of 7.50 cm, a median of 25.20 cm, and spread of 51.5 cm. 
+
+# Part 3: Modeling 
+
+Lets first set up an initial ordinary least squares model. We will predict weight using our three length measurements, height, and width:
+``` {r}
+original_model <- lm(Weight ~ Length1 + Length2 + Length3 + Height + Width, data = fish)
+summary(original_model)
+```
+Looking at my model, I see that the model has a $R^2$ of 0.8853 . That means 88.53% of the variation in my data is captured by the model. I also see that my adjusted $R^2$ is 0.8815. However I see a really high residual standard error (RSE) of 123.2, which means that our predicted values deviate quite far from the actual values. Based on the p-values I see that only height is seen as significant in predicting weight (p-value is below 0.05). That is a bit concerning, and may be a indication that we have some multicollinearity, given that the $ R^2 $ is so high. 
+
+Lets look at if this model we made actually follows our linear model assumptions. Lets start with diagnostic plots. The assumptions we will look at is whether our response variable and our predictors are linearly associated, if the errors are normally distributed, if there is constant error variance, and if we have influential points. 
+``` {r}
+par(mfrow= c(2,2))
+plot(original_model)
+```
+Looking at my diagnostic plots, I see a ton of red flags. My data residuals vs fitted values are not linear, and a pretty evident curve is present. I also see that maybe there is not constant error variance, with residuals growing as fitted values increase (fan shape). I do see that based on the Q-Q plot my errors seem to be normally distributed. Finally I see I have no high influence points. However fish 143, 144, and 145 seems to be far from the rest. 
+
+
+Since we don't seem to have a linear relationship between our response and predictor variables, we will need too employ a transformation. I am going to try a log transformation. 
+
+``` {r}
+transformed_model <- lm(log(Weight) ~ log(Length1) + log(Length2) + 
+                          log(Length3) + log(Height) + log(Width), data = fish)
+summary(transformed_model)
+```
+
+``` {r}
+par(mfrow=c(2,2))
+plot(transformed_model)
+```
+This transformation helped out a lot. We see that we no longer have an apparent curve in our data, and we have constant error variance. We continue to have normally distributed errors, and no high influence points. 
+
+While we may not have any high influence points, we may have some outliers. Let us do a outlier test to be on the safe side. 
+``` {r}
+bonferoni <- abs(qt(0.05/(2*dim(fish)[1]), transformed_model$df.residual -1))
+rstud <- abs(rstudent(transformed_model))
+rstud[rstud >= bonferoni]
+```
+It seems we have one outlier, but because there are it is not an influential point (Cook's Distance above 1), I will not remove it from the data. 
+
+Before we move forward, let us investigate whether the model has multicollinearity. Earlier we said that only one of our 5 predictors was significant (height). But our $ R^2 $ was extremely high. So we suspected there was multicollinearity. There are many ways to identify multicollinearity, but let us look at the most basic way. Looking at the correlations of our predictor variables. 
+``` {r}
+cor(fish[,-1])
+```
+So already without even looking at the condition numbers or the variance inflation factor (VIF) I see that we have multicollinearity in our model. As such we need to do something. As such I think it would be best to see which predictors are not helping our data, and remove those, that way there are not duplicates. For this reason, I will use variable selection methods. Since we have only 5 predictors, I will opt to use the leaps and bounds method which will return the most optimal solution regarding variables for each model size. Then I will  take into account the AIC, BIC, Mallow's CP, and adjusted $ R^2 $ to determine which size and which variables I should use. 
+``` {r}
+library(leaps)
+a <- regsubsets(log(Weight) ~ log(Length1) + log(Length2) + log(Length3) +  
+                  log(Height) + log(Width), data = fish)
+rs <- summary(a)
+rs$which
+```
+The output below shows us the optimal model for every single possible model size (ie 1 predictor, 2 predictors, etc). Now we will look at the ideal number of predictors. But first we should see what that is based on our four metrics. 
+``` {r}
+n <- dim(fish)[1]; msize = 2:6;
+Aic <- n*log(rs$rss/n) + 2*msize;
+Bic <- n*log(rs$rss/n) + msize*log(n);
+par(mfrow=c(2,2))
+plot(msize, Aic, xlab="No. of Parameters", ylab = "AIC");
+plot(msize, Bic, xlab="No. of Parameters", ylab = "BIC");
+plot(msize, rs$adjr2, xlab="No. of Parameters", ylab = "Adjusted Rsquare");
+plot(msize, rs$cp, xlab="No. of Parameters", ylab = "Mallow's Cp");
+```
+Looks like all scores of the model suggest we use four parameters (intercept + 3 predictors). 
+``` {r}
+rs$which[which.min(Aic),]
+```
+So our simplified can be defined as the following:
+``` {r}
+simplified_model <- lm(log(Weight) ~ log(Length2) + log(Height) + log(Width), data = fish)
+summary(simplified_model)
+```
+We see a beautiful model, with all of my predictors being significant, and we have a extremely high $ R^2 $ of 0.9946. The residual standard error of 0.09804 is very low. 
+
+# Part 4: Species?
+So now I will consider if species is a significant variable. I am going to fit an ANCOVA model, with species added. 
+``` {r}
+ANCOVA <- lm(log(Weight) ~ log(Length2) + log(Height) + log(Width) + Species, data = fish)
+summary(ANCOVA)
+```
+Let us now do a F-Test to determine if we need species or not. 
+``` {r}
+anova(simplified_model, ANCOVA)
+```
+I have a tiny p-value(basically 0), so I would reject the null hypothesis that the effect of species is 0, and find that is is significant. 
+
+Let us now see if species is added additively. So what I am going to do is because I only have three predictors, I am to make 3 additive models, and do 3 F-Tests.
+``` {r}
+mod_interaction1 <- lm(log(Weight) ~ log(Length2) * Species + log(Height) + log(Width), data = fish)
+mod_interaction2 <- lm(log(Weight) ~ log(Length2) + log(Height) * Species + log(Width), data = fish)
+mod_interaction3 <- lm(log(Weight) ~ log(Length2)+ log(Height) + log(Width) * Species, data = fish)
+```
+``` {r}
+anova(ANCOVA, mod_interaction1)
+```
+``` {r}
+anova(ANCOVA, mod_interaction2)
+```
+``` {r}
+anova(ANCOVA, mod_interaction3)
+```
+As we can see based on our 3 F-Tests, that there is no interaction between species and width or height, if I set my significance level to be $\alpha = 0.05$ The p-value is 0.05 for interaction between species and length2. As such, we will not include any interaction, and we find species enters aditively . 
+
+Now a question we can ask is should we fit different models for each species. It is true that creating different models for each species may be more accurate for that specific species(ie low bias), however it would be a high variance model when applied to testing data. As such we would better off using this more grand interaction model instead. 
+
+Let us doing a final prediction. We will use our transformed grand interaction model, and predict the weight of the fish. We will need apply a exponential function to the results as our model will produce the log weight.  
+``` {r}
+Predicted_Log_Weight <- predict(ANCOVA, fish)
+fish$Predicted_Weight <- exp(Predicted_Log_Weight)
+head(fish[c("Weight", "Predicted_Weight")], 10)
+```
+
+Let us now calculate the RMSE:
+``` {r}
+sqrt(sum(((fish$Weight - fish$Predicted_Weight)^2) / nrow(fish)))
+```
+We had some fish that weighed more than most, which could be a reason for that RMSE. But regardless, this model based on our data is the best model for predicting fish weights. It is important to note that we did not do any train-test-splitting or cross validation, which means there could be in theory an over fitting of the model. Further analysis would be needed. 
